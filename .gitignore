@@ -1,0 +1,9 @@
+.DS_Store
+outputs/
+__pycache__
+PPG_data/Compiled
+PPG_data/Scripts
+PPG_data/.DS_Store
+logs/
+checkpoints/
+#main_log.txt

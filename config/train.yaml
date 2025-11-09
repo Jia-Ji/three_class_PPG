@@ -1,0 +1,169 @@
+data:
+#   path:
+#     train:
+#       x_path: "./PPG_data/splitted_data/ECG/ECG_x_train.npy"
+#       y_path: "./PPG_data/splitted_data/ECG/ECG_y_train.npy"
+#     valid:
+#       x_path: "./PPG_data/splitted_data/ECG/ECG_x_val.npy"
+#       y_path: "./PPG_data/splitted_data/ECG/ECG_y_val.npy"
+#     test:
+#       x_path: "./PPG_data/splitted_data/ECG/ECG_x_test.npy"
+#       y_path: "./PPG_data/splitted_data/ECG/ECG_y_test.npy"
+  path:
+    train:
+      x_path: "./PPG_data/splitted_data/x_train.npy"
+      y_path: "./PPG_data/splitted_data/y_train.npy"
+    valid:
+      x_path: "./PPG_data/splitted_data/x_val.npy"
+      y_path: "./PPG_data/splitted_data/y_val.npy"
+    test:
+      x_path: "./PPG_data/splitted_data/x_test.npy"
+      y_path: "./PPG_data/splitted_data/y_test.npy"
+      ecg_path: "./PPG_data/splitted_data/ECG_x_test.npy"
+      include_ecg: true
+  loader:
+      batch_size: 64
+      num_workers: 4
+      pin_memory: True
+      drop_last: True
+      persistent_workers: False
+
+  augmentations:
+    enable: true
+    target_ratio: 1.0  # Target ratio of ectopic to normal (1.0 = equal classes)
+    amplitude_scaling:
+      enable: true
+      params: { scale_min: 0.8, scale_max: 1.2, p: 0.5 }
+    baseline_wander:
+      enable: true
+      params: { freq_hz: [0.02, 0.2], amp: [0.01, 0.05], p: 0.5, fs: 240 }
+    additive_gaussian_noise:
+      enable: true
+      params: { std_frac: [0.005, 0.02], p: 0.5 }
+    random_dropouts:
+      enable: true
+      params: { max_frac: 0.05, p: 0.3 }
+    motion_artifacts:
+      enable: true
+      params: { max_segments: 3, seg_len_frac: [0.01, 0.05], amp_frac: [0.5, 2.0], p: 0.3 }
+    time_scaling:
+      enable: true
+      params: { scale_min: 0.95, scale_max: 1.05, p: 0.3 }
+
+model:
+  task: binary
+  num_classes: 2
+  lr: 0.001
+  weight_decay: 0.0005
+  loss_name: bce
+  use_lr_scheduler: False
+  lr_warmup_ratio: 0.01
+  device: cuda
+  config:
+    hyperparameters:
+      feat_extracter:
+        signal_channels: 1
+        stride: 1
+        layer_norm: True
+        feat_dim: 128
+        dropout_p: 0.3
+        use_attention: True
+        attention_heads: 8
+      classifier:
+        num_classes: 2
+    metrics:
+      accuracy: True
+      cf_matrix: True
+      f1: True
+      specificity: True
+      AUC: True
+      sensitivity: True
+      ppv: True
+    misclassified_samples:
+      enable: True  
+      max_samples: 20
+      
+
+
+trainer:
+  parameters:
+    accelerator: "gpu"
+    strategy: "auto"
+    devices: "auto"
+    num_nodes: 1
+    precision: "32"
+    fast_dev_run: False
+    max_epochs: 100
+    min_epochs: 1
+    max_steps: -1
+    min_steps: Null
+    max_time: Null
+    limit_train_batches: Null
+    limit_val_batches: Null
+    limit_test_batches: Null
+    limit_predict_batches: null
+    overfit_batches: 0.0
+    val_check_interval: null
+    check_val_every_n_epoch: 1
+    num_sanity_val_steps: 0
+    log_every_n_steps: 1
+    enable_checkpointing: True
+    enable_progress_bar: True
+    enable_model_summary: null
+    accumulate_grad_batches: 1
+    gradient_clip_val: null
+    gradient_clip_algorithm: null
+    deterministic: True
+    benchmark: False
+    inference_mode: True
+    profiler: null
+    detect_anomaly: False
+    plugins: null
+    sync_batchnorm: False
+    reload_dataloaders_every_n_epochs: 0
+    default_root_dir: null
+  callbacks:
+    model_checkpoint:
+      dirpath: "checkpoints"
+      filename: "resnet18-{epoch:02d}-{valid_loss:2f}-{valid_accuracy:2f}"
+      monitor: "valid_loss"
+      verbose: True
+      save_last: True
+      save_top_k: 3
+      save_weights_only: False
+      mode: "min"
+      auto_insert_metric_name: True
+      every_n_train_steps: Null
+      train_time_interval: Null
+      every_n_epochs: Null
+      save_on_train_epoch_end: False
+    logger:
+      save_dir: logs/
+      name: ""
+      version: Null
+      log_graph: False
+      default_hp_metric: True
+      prefix: ""
+      sub_dir: Null
+    early_stop:
+      monitor: "valid_loss"
+      min_delta: 0.001
+      patience: 20
+      verbose: True
+      mode: "min"
+      strict: True
+      check_finite: True
+      stopping_threshold: null
+      divergence_threshold: null
+      check_on_train_epoch_end: False
+    progress_bar:
+      refresh_rate: 20
+      process_position: 0
+
+
+experiment:
+  train: True
+  test: True
+  resume_ckpt: False
+  ckpt_path: null
+  saved_model_path: null

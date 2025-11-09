@@ -1,0 +1,15 @@
+Train PPG distribution (%):
+ECGcat
+NORM    79.25
+PVC     20.75
+
+Validation PPG distribution (%):
+ECGcat
+NORM    83.55
+PVC     16.45
+
+Test PPG distribution (%):
+ECGcat
+NORM    84.69
+PVC     15.31
+
