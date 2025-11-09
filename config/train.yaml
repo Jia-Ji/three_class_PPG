@@ -30,7 +30,12 @@ data:
 
   augmentations:
     enable: true
-    target_ratio: 1.0  # Target ratio of ectopic to normal (1.0 = equal classes)
+    reference_class: 0  # Use normal beats as the reference count
+    classes_to_augment: [1, 2]  # Augment PVC and PAC classes
+    target_class_ratios:  # Desired ratio relative to reference class
+      0: 1.0  # Normal
+      1: 1.0  # PVC
+      2: 1.0  # PAC
     amplitude_scaling:
       enable: true
       params: { scale_min: 0.8, scale_max: 1.2, p: 0.5 }
@@ -51,15 +56,16 @@ data:
       params: { scale_min: 0.95, scale_max: 1.05, p: 0.3 }
 
 model:
-  task: binary
-  num_classes: 2
+  task: multiclass
+  num_classes: 3
   lr: 0.001
   weight_decay: 0.0005
-  loss_name: bce
+  loss_name: cross_entropy
   use_lr_scheduler: False
   lr_warmup_ratio: 0.01
   device: cuda
   config:
+    class_names: ["Normal", "PVC", "PAC"]
     hyperparameters:
       feat_extracter:
         signal_channels: 1
@@ -70,7 +76,7 @@ model:
         use_attention: True
         attention_heads: 8
       classifier:
-        num_classes: 2
+        num_classes: 3
     metrics:
       accuracy: True
       cf_matrix: True

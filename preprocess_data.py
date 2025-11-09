@@ -38,10 +38,10 @@ df['index'] = df.index
 label_mapping = {
     'NORM': 0,
     'PVC': 1,
-    # 'PAC': 2,
+    'PAC': 2,
 }
 
-target_class_order = ['NORM', 'PVC']
+target_class_order = ['NORM', 'PVC', 'PAC']
 
 
 target_classes = set(label_mapping.keys())

@@ -1,4 +1,5 @@
 import torch
+from omegaconf import OmegaConf
 from data import TrainDataset, ValidDataset, TestDataset, BalancedTrainDataset
 from data.augmentations import AmplitudeScaling, BaselineWander, AdditiveGaussianNoise, RandomDropouts, MotionArtifacts, TimeScaling, Compose
 
@@ -36,7 +37,7 @@ def create_test_data_loader(cfg):
     return test_dataloader
 
 def _build_ectopic_augmentations(aug_cfg):
-    """Build augmentation pipeline specifically for ectopic segments"""
+    """Build augmentation pipeline for selected target classes."""
     if not getattr(aug_cfg, "enable", False):
         return []
     
@@ -63,16 +64,34 @@ def _build_ectopic_augmentations(aug_cfg):
     return transforms
 
 def create_balanced_train_data_loader(cfg):
-    """Create balanced training data loader with ectopic augmentation"""
-    
-    # Build augmentation pipeline for ectopic segments
-    augmentation_transforms = _build_ectopic_augmentations(cfg.augmentations) if hasattr(cfg, "augmentations") else []
-    
+    """Create balanced training data loader with class-specific augmentation."""
+
+    augmentation_transforms = []
+    target_class_ratios = None
+    reference_class = None
+    classes_to_augment = None
+
+    if hasattr(cfg, "augmentations"):
+        augmentation_transforms = _build_ectopic_augmentations(cfg.augmentations)
+
+        if hasattr(cfg.augmentations, "target_class_ratios"):
+            target_class_ratios = OmegaConf.to_container(
+                cfg.augmentations.target_class_ratios, resolve=True
+            )
+
+        if hasattr(cfg.augmentations, "reference_class"):
+            reference_class = cfg.augmentations.reference_class
+
+        if hasattr(cfg.augmentations, "classes_to_augment"):
+            classes_to_augment = list(cfg.augmentations.classes_to_augment)
+
     # Create balanced dataset
     train_datasets = BalancedTrainDataset(
         **cfg.path.train,
         augmentation_transforms=augmentation_transforms,
-        target_ratio=getattr(cfg.augmentations, "target_ratio", 1.0)  # 1.0 = equal classes
+        target_class_ratios=target_class_ratios,
+        reference_class=reference_class,
+        classes_to_augment=classes_to_augment,
     )
     
     train_dataloader = torch.utils.data.DataLoader(

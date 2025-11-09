@@ -1,15 +1,18 @@
 Train PPG distribution (%):
 ECGcat
-NORM    79.25
-PVC     20.75
+NORM    77.86
+PVC     21.40
+PAC      0.74
 
 Validation PPG distribution (%):
 ECGcat
-NORM    83.55
-PVC     16.45
+NORM    84.16
+PVC     14.24
+PAC      1.60
+
 
 Test PPG distribution (%):
 ECGcat
-NORM    84.69
-PVC     15.31
-
+NORM    90.34
+PVC      9.26
+PAC      0.40

@@ -92,11 +92,8 @@ class EctopicsClassifier(pl.LightningModule):
         print("Metrics: ", self.config.metrics, flush=True)
 
         self.model = CompeleteModel(self.config)
-        
-        if self.loss_name == 'bce':
-            self.loss_fn = get_loss_function(self.loss_name)
-        else:
-            raise ValueError(f"Invalid loss function: {self.loss_name}")
+
+        self.loss_fn = get_loss_function(self.loss_name)
         
         self.metrics = nn.ModuleDict({
             "metrics_train": nn.ModuleDict({}),
@@ -141,7 +138,15 @@ class EctopicsClassifier(pl.LightningModule):
                             task="multiclass", num_classes=self.num_classes, average="macro"
                         )
 
-        
+        if self.config is not None and hasattr(self.config, "class_names"):
+            class_names = OmegaConf.to_container(self.config.class_names, resolve=True)
+            self.class_names = list(class_names)
+        else:
+            self.class_names = [f"Class {idx}" for idx in range(self.num_classes)]
+
+        if len(self.class_names) != self.num_classes:
+            self.class_names = [f"Class {idx}" for idx in range(self.num_classes)]
+
         self.step_losses = {"train": [], "valid": [], "test": []}
         
         # Configure misclassified samples collection from training config
@@ -245,7 +250,14 @@ class EctopicsClassifier(pl.LightningModule):
                 axes = axes.reshape(1, -1)
             axes = axes.flatten()
         
-        label_names = ['Normal', 'PVC']
+        label_names = self.class_names
+
+        def _format_probabilities(probabilities):
+            if probabilities is None:
+                return ""
+            probs = np.asarray(probabilities).reshape(-1)
+            prob_tokens = ", ".join(f"{p:.3f}" for p in probs)
+            return f"Prob: [{prob_tokens}]"
         
         def _to_1d(signal_array):
             if isinstance(signal_array, torch.Tensor):
@@ -270,7 +282,7 @@ class EctopicsClassifier(pl.LightningModule):
                 ppg_ax.set_title(
                     f'True: {label_names[sample["true_label"]]}, '
                     f'Pred: {label_names[sample["prediction"]]}'
-                    f'\nProb: [{sample["probabilities"][0]:.3f}, {sample["probabilities"][1]:.3f}]',
+                    f'\n{_format_probabilities(sample.get("probabilities"))}',
                     fontsize=9
                 )
                 ppg_ax.grid(True, alpha=0.3)
@@ -294,7 +306,7 @@ class EctopicsClassifier(pl.LightningModule):
                 ax.set_title(
                     f'True: {label_names[sample["true_label"]]}, '
                     f'Pred: {label_names[sample["prediction"]]}'
-                    f'\nProb: [{sample["probabilities"][0]:.3f}, {sample["probabilities"][1]:.3f}]',
+                    f'\n{_format_probabilities(sample.get("probabilities"))}',
                     fontsize=9
                 )
                 ax.grid(True, alpha=0.3)
@@ -340,11 +352,31 @@ class EctopicsClassifier(pl.LightningModule):
         
         plt.close(fig)
 
-    def update_metrics(self, outputs, targets, phase: str = "train"):
-        # model_device =  next(self.model.parameters()).device
-        for k in self.config.metrics:
-            # metric_device = self.metrics["metrics_" + phase][k].device
-            self.metrics["metrics_" + phase][k].update(outputs, targets)
+    def update_metrics(self, preds, targets, phase: str = "train", logits: torch.Tensor = None):
+        for metric_name in self.config.metrics:
+            metric_module = self.metrics["metrics_" + phase][metric_name]
+
+            if metric_name in {"accuracy", "cf_matrix"}:
+                metric_module.update(preds, targets)
+                continue
+
+            if logits is None:
+                metric_module.update(preds, targets)
+                continue
+
+            probs = F.softmax(logits.detach(), dim=-1)
+
+            if self.task == "binary":
+                positive_probs = probs[..., 1]
+                if metric_name == "AUC":
+                    metric_module.update(positive_probs, targets)
+                else:
+                    metric_module.update(positive_probs, targets)
+            else:
+                if metric_name == "AUC":
+                    metric_module.update(probs, targets)
+                else:
+                    metric_module.update(probs, targets)
 
     def reset_metrics(self, phase: str = "train"):
         for k in self.config.metrics:
@@ -374,13 +406,9 @@ class EctopicsClassifier(pl.LightningModule):
         # print(targets.shape)
         preds = torch.argmax(output_logits, dim=1)
 
-
-        if self.loss_name == "bce":
-            loss = self.loss_fn(targets, output_logits, self.device)
-        else:
-            raise ValueError(f"Invalid loss function: {self.loss_name}")
+        loss = self.loss_fn(targets, output_logits, output_logits.device)
         
-        self.update_metrics(preds, targets, "train")
+        self.update_metrics(preds, targets, "train", logits=output_logits)
           
         self.step_losses["train"].append(loss.item())
         return {"loss": loss}
@@ -436,10 +464,10 @@ class EctopicsClassifier(pl.LightningModule):
         x, targets = batch
         output_logits = self(x)
         preds = torch.argmax(output_logits, dim=1)
-        loss = F.cross_entropy(output_logits, targets)
+        loss = self.loss_fn(targets, output_logits, output_logits.device)
 
-        self.update_metrics(preds, targets, "valid")
-        self.step_losses["valid"].append(loss)
+        self.update_metrics(preds, targets, "valid", logits=output_logits)
+        self.step_losses["valid"].append(loss.detach().item())
 
         # # Collect misclassified samples if enabled
         # if self.collect_misclassified_samples:
@@ -533,10 +561,10 @@ class EctopicsClassifier(pl.LightningModule):
 
         output_logits = self(x)
         preds = torch.argmax(output_logits, dim=1)
-        loss = F.cross_entropy(output_logits, targets)
+        loss = self.loss_fn(targets, output_logits, output_logits.device)
 
-        self.update_metrics(preds, targets, "test")
-        self.step_losses["test"].append(loss)
+        self.update_metrics(preds, targets, "test", logits=output_logits)
+        self.step_losses["test"].append(loss.detach().item())
 
         # Collect misclassified samples if enabled
         if self.collect_misclassified_samples:
