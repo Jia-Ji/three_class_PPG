@@ -76,7 +76,10 @@ model:
         use_attention: True
         attention_heads: 8
       classifier:
-        num_classes: 3
+        hidden_dims: [128, 64, 32]
+        dropout_p: 0.3
+        activation: "relu"  
+        num_classes: 3          
     metrics:
       accuracy: True
       cf_matrix: True

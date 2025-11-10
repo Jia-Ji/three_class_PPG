@@ -69,11 +69,46 @@ def main(cfg: DictConfig) -> None:
             ckpt_path=ckpt_path,
         )
 
+    test_metrics = {}
     if cfg.experiment.test:
         # Use best checkpoint if available; otherwise test current model
         test_ckpt = "best" if cfg.trainer.callbacks.model_checkpoint.save_top_k and cfg.trainer.callbacks.model_checkpoint.monitor else None
         trainer.test(model=model, dataloaders=test_loader, ckpt_path=test_ckpt)
-        
+        test_metrics = getattr(model, "test_epoch_metrics", {})
+
+        if test_metrics:
+            version = logger.version if logger.version is not None else ""
+            if version:
+                csv_log_dir = os.path.join(csv_logger.save_dir, csv_logger.name, f"version_{version}")
+            else:
+                csv_log_dir = os.path.join(csv_logger.save_dir, csv_logger.name)
+
+            os.makedirs(csv_log_dir, exist_ok=True)
+            metrics_csv_path = os.path.join(csv_log_dir, "metrics.csv")
+
+            epoch_value = getattr(model, "current_epoch", -1)
+            metrics_payload = {"phase": "test", "epoch": int(epoch_value)}
+            metrics_payload.update(test_metrics)
+
+            if os.path.exists(metrics_csv_path):
+                existing_df = pd.read_csv(metrics_csv_path)
+                updated_df = pd.concat([existing_df, pd.DataFrame([metrics_payload])], ignore_index=True)
+            else:
+                updated_df = pd.DataFrame([metrics_payload])
+
+            updated_df.to_csv(metrics_csv_path, index=False)
+
+            print("\nFinal test metrics:", flush=True)
+            for key in sorted(test_metrics.keys()):
+                value = test_metrics[key]
+                if isinstance(value, list):
+                    print(f"{key}: {value}", flush=True)
+                else:
+                    try:
+                        print(f"{key}: {float(value):.6f}", flush=True)
+                    except (TypeError, ValueError):
+                        print(f"{key}: {value}", flush=True)
+
     # Save main_log.txt to logs directory after testing
     original_cwd = hydra.utils.get_original_cwd()
     main_log_path = os.path.join(original_cwd, "main_log.txt")
