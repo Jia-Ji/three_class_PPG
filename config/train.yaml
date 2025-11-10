@@ -58,7 +58,7 @@ data:
 model:
   task: multiclass
   num_classes: 3
-  lr: 0.001
+  lr: 0.0005
   weight_decay: 0.0005
   loss_name: cross_entropy
   use_lr_scheduler: False

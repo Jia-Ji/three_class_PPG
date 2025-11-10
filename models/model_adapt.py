@@ -26,8 +26,8 @@ class CompeleteModel(nn.Module):
     
 
     def __initialize_modules(self, config: DictConfig):
-        self.feat_extracter = resnet18_1D(**config.hyperparameters.feat_extracter)
-        # self.feat_extracter = resnet34_1D(**config.hyperparameters.feat_extracter)
+        # self.feat_extracter = resnet18_1D(**config.hyperparameters.feat_extracter)
+        self.feat_extracter = resnet34_1D(**config.hyperparameters.feat_extracter)
         self.classifier = nn.Linear(config.hyperparameters.feat_extracter.feat_dim,
                                 config.hyperparameters.classifier.num_classes)
     
