@@ -1,0 +1,196 @@
+data:
+  path:
+    train:
+      x_path: ./PPG_data/splitted_data/x_train.npy
+      y_path: ./PPG_data/splitted_data/y_train.npy
+    valid:
+      x_path: ./PPG_data/splitted_data/x_val.npy
+      y_path: ./PPG_data/splitted_data/y_val.npy
+    test:
+      x_path: ./PPG_data/splitted_data/x_test.npy
+      y_path: ./PPG_data/splitted_data/y_test.npy
+      ecg_path: ./PPG_data/splitted_data/ECG_x_test.npy
+      include_ecg: true
+  loader:
+    batch_size: 64
+    num_workers: 4
+    pin_memory: true
+    drop_last: true
+    persistent_workers: false
+  augmentations:
+    enable: true
+    reference_class: 0
+    classes_to_augment:
+    - 1
+    - 2
+    target_class_ratios:
+      0: 1.0
+      1: 1.0
+      2: 1.0
+    amplitude_scaling:
+      enable: true
+      params:
+        scale_min: 0.8
+        scale_max: 1.2
+        p: 0.5
+    baseline_wander:
+      enable: true
+      params:
+        freq_hz:
+        - 0.02
+        - 0.2
+        amp:
+        - 0.01
+        - 0.05
+        p: 0.5
+        fs: 240
+    additive_gaussian_noise:
+      enable: true
+      params:
+        std_frac:
+        - 0.005
+        - 0.02
+        p: 0.5
+    random_dropouts:
+      enable: true
+      params:
+        max_frac: 0.05
+        p: 0.3
+    motion_artifacts:
+      enable: true
+      params:
+        max_segments: 3
+        seg_len_frac:
+        - 0.01
+        - 0.05
+        amp_frac:
+        - 0.5
+        - 2.0
+        p: 0.3
+    time_scaling:
+      enable: true
+      params:
+        scale_min: 0.95
+        scale_max: 1.05
+        p: 0.3
+model:
+  task: multiclass
+  num_classes: 3
+  lr: 0.0005
+  weight_decay: 0.0005
+  loss_name: cross_entropy
+  use_lr_scheduler: false
+  lr_warmup_ratio: 0.01
+  device: cuda
+  config:
+    class_names:
+    - Normal
+    - PVC
+    - PAC
+    hyperparameters:
+      feat_extracter:
+        signal_channels: 1
+        stride: 1
+        layer_norm: true
+        feat_dim: 128
+        dropout_p: 0.3
+        use_attention: true
+        attention_heads: 8
+      classifier:
+        hidden_dims:
+        - 128
+        - 64
+        dropout_p: 0.3
+        activation: leaky_relu
+        num_classes: 3
+    metrics:
+      accuracy: true
+      cf_matrix: true
+      f1: true
+      specificity: true
+      AUC: true
+      sensitivity: true
+      ppv: true
+    misclassified_samples:
+      enable: true
+      max_samples: 20
+trainer:
+  parameters:
+    accelerator: gpu
+    strategy: auto
+    devices: auto
+    num_nodes: 1
+    precision: '32'
+    fast_dev_run: false
+    max_epochs: 100
+    min_epochs: 1
+    max_steps: -1
+    min_steps: null
+    max_time: null
+    limit_train_batches: null
+    limit_val_batches: null
+    limit_test_batches: null
+    limit_predict_batches: null
+    overfit_batches: 0.0
+    val_check_interval: null
+    check_val_every_n_epoch: 1
+    num_sanity_val_steps: 0
+    log_every_n_steps: 1
+    enable_checkpointing: true
+    enable_progress_bar: true
+    enable_model_summary: null
+    accumulate_grad_batches: 1
+    gradient_clip_val: null
+    gradient_clip_algorithm: null
+    deterministic: true
+    benchmark: false
+    inference_mode: true
+    profiler: null
+    detect_anomaly: false
+    plugins: null
+    sync_batchnorm: false
+    reload_dataloaders_every_n_epochs: 0
+    default_root_dir: null
+  callbacks:
+    model_checkpoint:
+      dirpath: checkpoints
+      filename: resnet18-{epoch:02d}-{valid_loss:2f}-{valid_accuracy:2f}
+      monitor: valid_loss
+      verbose: true
+      save_last: true
+      save_top_k: 3
+      save_weights_only: false
+      mode: min
+      auto_insert_metric_name: true
+      every_n_train_steps: null
+      train_time_interval: null
+      every_n_epochs: null
+      save_on_train_epoch_end: false
+    logger:
+      save_dir: logs/
+      name: ''
+      version: null
+      log_graph: false
+      default_hp_metric: true
+      prefix: ''
+      sub_dir: null
+    early_stop:
+      monitor: valid_loss
+      min_delta: 0.001
+      patience: 20
+      verbose: true
+      mode: min
+      strict: true
+      check_finite: true
+      stopping_threshold: null
+      divergence_threshold: null
+      check_on_train_epoch_end: false
+    progress_bar:
+      refresh_rate: 20
+      process_position: 0
+experiment:
+  train: true
+  test: true
+  resume_ckpt: false
+  ckpt_path: null
+  saved_model_path: null
