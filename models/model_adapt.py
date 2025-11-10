@@ -28,8 +28,30 @@ class CompeleteModel(nn.Module):
     def __initialize_modules(self, config: DictConfig):
         # self.feat_extracter = resnet18_1D(**config.hyperparameters.feat_extracter)
         self.feat_extracter = resnet34_1D(**config.hyperparameters.feat_extracter)
-        self.classifier = nn.Linear(config.hyperparameters.feat_extracter.feat_dim,
-                                config.hyperparameters.classifier.num_classes)
+   
+        classifier_cfg = config.hyperparameters.classifier
+        in_dim = config.hyperparameters.feat_extracter.feat_dim
+        hidden_dims = getattr(classifier_cfg, "hidden_dims", [])
+        dropout_p = getattr(classifier_cfg, "dropout_p", 0.0)
+        activation_name = getattr(classifier_cfg, "activation", "relu").lower()
+
+        if activation_name == "gelu":
+            activation_cls = nn.GELU
+        elif activation_name == "leaky_relu":
+            activation_cls = lambda: nn.LeakyReLU(negative_slope=getattr(classifier_cfg, "negative_slope", 0.01))
+        else:
+            activation_cls = nn.ReLU
+
+        layers: List[nn.Module] = []
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(in_dim, hidden_dim))
+            layers.append(activation_cls())
+            if dropout_p and dropout_p > 0.0:
+                layers.append(nn.Dropout(dropout_p))
+            in_dim = hidden_dim
+
+        layers.append(nn.Linear(in_dim, classifier_cfg.num_classes))
+        self.classifier = nn.Sequential(*layers)
     
     def forward(self, x:Tensor):
         feat = self.feat_extracter(x)
@@ -112,30 +134,40 @@ class EctopicsClassifier(pl.LightningModule):
                         self.task, num_classes=self.num_classes
                     )
                 elif metric == "f1":
-                    self.metrics["metrics_" + phase][metric] = torchmetrics.F1Score(
-                        self.task, num_classes=self.num_classes
-                    )
+                    if self.task == "binary":
+                        self.metrics["metrics_" + phase][metric] = torchmetrics.F1Score(task="binary")
+                    else:
+                        self.metrics["metrics_" + phase][metric] = torchmetrics.F1Score(
+                            task="multiclass", num_classes=self.num_classes, average=None
+                        )
                 elif metric == "specificity":
-                    self.metrics["metrics_" + phase][metric] = torchmetrics.Specificity(
-                        self.task, num_classes=self.num_classes
-                    )
+                    if self.task == "binary":
+                        self.metrics["metrics_" + phase][metric] = torchmetrics.Specificity(task="binary")
+                    else:
+                        self.metrics["metrics_" + phase][metric] = torchmetrics.Specificity(
+                            task="multiclass", num_classes=self.num_classes, average=None
+                        )
                 elif metric == "AUC":
                     self.metrics["metrics_" + phase][metric] = torchmetrics.AUROC(
                         self.task, num_classes=self.num_classes
                     )
                 elif metric == "sensitivity":
                     if self.task == "binary":
-                        self.metrics["metrics_" + phase][metric] = torchmetrics.Recall(task="binary")
+                        self.metrics["metrics_" + phase][metric] = torchmetrics.Recall(
+                            task="binary"
+                        )
                     else:
                         self.metrics["metrics_" + phase][metric] = torchmetrics.Recall(
-                            task="multiclass", num_classes=self.num_classes, average="macro"
+                            task="multiclass", num_classes=self.num_classes, average=None
                         )
                 elif metric == "ppv":
                     if self.task == "binary":
-                        self.metrics["metrics_" + phase][metric] = torchmetrics.Precision(task="binary")
+                        self.metrics["metrics_" + phase][metric] = torchmetrics.Precision(
+                            task="binary"
+                        )
                     else:
                         self.metrics["metrics_" + phase][metric] = torchmetrics.Precision(
-                            task="multiclass", num_classes=self.num_classes, average="macro"
+                            task="multiclass", num_classes=self.num_classes, average=None
                         )
 
         if self.config is not None and hasattr(self.config, "class_names"):
@@ -148,6 +180,7 @@ class EctopicsClassifier(pl.LightningModule):
             self.class_names = [f"Class {idx}" for idx in range(self.num_classes)]
 
         self.step_losses = {"train": [], "valid": [], "test": []}
+        self.test_epoch_metrics = {}
         
         # Configure misclassified samples collection from training config
         if self.config is not None and hasattr(self.config, 'keys'):
@@ -382,6 +415,50 @@ class EctopicsClassifier(pl.LightningModule):
         for k in self.config.metrics:
             self.metrics["metrics_" + phase][k].reset()
     
+    def _get_class_key(self, class_idx: int) -> str:
+        if class_idx < len(self.class_names):
+            name = self.class_names[class_idx]
+        else:
+            name = f"class_{class_idx}"
+        sanitized = "".join(ch.lower() if ch.isalnum() else "_" for ch in name)
+        sanitized = sanitized.strip("_")
+        while "__" in sanitized:
+            sanitized = sanitized.replace("__", "_")
+        if not sanitized:
+            sanitized = f"class_{class_idx}"
+        return sanitized
+
+    def _collect_metric_values(
+        self,
+        phase: str,
+        metrics_mapping: List[Tuple[str, Union[float, torch.Tensor]]],
+        include_per_class: bool = True,
+    ):
+        collected = {}
+        for metric_name, metric_value in metrics_mapping:
+            if metric_value is None:
+                continue
+
+            if isinstance(metric_value, torch.Tensor):
+                if metric_value.ndim == 0:
+                    scalar = metric_value.detach().cpu().float().item()
+                    collected[f"{phase}_{metric_name}"] = float(scalar)
+                elif metric_value.ndim == 1 and include_per_class:
+                    tensor_value = metric_value.detach().cpu().float()
+                    macro_value = torch.nanmean(tensor_value)
+                    macro_scalar = macro_value.item() if not torch.isnan(macro_value) else 0.0
+                    collected[f"{phase}_{metric_name}_macro"] = float(macro_scalar)
+                    for idx, class_val in enumerate(tensor_value):
+                        class_scalar = class_val.item() if not torch.isnan(class_val) else 0.0
+                        class_key = self._get_class_key(idx)
+                        collected[f"{phase}_{metric_name}_{class_key}"] = float(class_scalar)
+                else:
+                    continue
+            else:
+                collected[f"{phase}_{metric_name}"] = float(metric_value)
+
+        return collected
+
     def log_all(self, items: List[Tuple[str, Union[float, torch.Tensor]]], phase: str = "train", prog_bar: bool = True, sync_dist_group: bool = False):
         for key, value in items:
             if value is not None:
@@ -392,6 +469,26 @@ class EctopicsClassifier(pl.LightningModule):
                 elif isinstance(value, torch.Tensor):
                     if len(value.shape) == 0:  # Scalar tensor
                         self.log(f"{phase}_{key}", value, prog_bar=prog_bar, sync_dist_group=sync_dist_group)
+                    elif len(value.shape) == 1:  # 1D tensor, per-class metrics
+                        tensor_value = value.detach().to(torch.float32)
+                        macro_value = torch.nanmean(tensor_value)
+                        if torch.isnan(macro_value):
+                            macro_value = torch.tensor(0.0, device=tensor_value.device)
+                        macro_value_cpu = macro_value.detach().cpu()
+                        self.log(f"{phase}_{key}", macro_value_cpu, prog_bar=prog_bar, sync_dist_group=sync_dist_group)
+                        self.log(f"{phase}_{key}_macro", macro_value_cpu, prog_bar=False, sync_dist_group=sync_dist_group)
+                        for idx, class_val in enumerate(tensor_value):
+                            class_key = self._get_class_key(idx)
+                            scalar_val = class_val
+                            if torch.isnan(scalar_val):
+                                scalar_val = torch.tensor(0.0, device=tensor_value.device)
+                            scalar_val_cpu = scalar_val.detach().cpu()
+                            self.log(
+                                f"{phase}_{key}_{class_key}",
+                                scalar_val_cpu,
+                                prog_bar=False,
+                                sync_dist_group=sync_dist_group,
+                            )
                     elif len(value.shape) == 2:  # 2D tensor, assume confusion matrix and log as image
                         image_tensor = self.plot_confusion_matrix(value)
                         self.logger.experiment.add_image(f"{phase}_{key}", image_tensor, global_step=self.current_epoch)
@@ -635,6 +732,20 @@ class EctopicsClassifier(pl.LightningModule):
                 prog_bar=True,
                 sync_dist_group=False,
             )
+
+        metrics_to_store = [
+            ("loss", avg_loss),
+            ("accuracy", acc),
+            ("specificity", spec),
+            ("AUC", auc),
+            ("sensitivity", sensitivity),
+            ("ppv", ppv),
+            ("f1", f1),
+        ]
+        self.test_epoch_metrics = self._collect_metric_values("test", metrics_to_store, include_per_class=True)
+        if "confusion_matrix" in self.metrics_lst and matrix is not None:
+            collected_matrix = matrix.detach().cpu().to(torch.int64)
+            self.test_epoch_metrics["test_confusion_matrix"] = collected_matrix.numpy().tolist()
         
         self.reset_metrics("test")
         self.step_losses["test"].clear()
